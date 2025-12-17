@@ -12,7 +12,8 @@
         crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <link rel="manifest" href="manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -509,16 +510,18 @@
         }
 
         // --- 初始化启动 ---
-        const hands = new Hands({ 
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424515/${file}` 
+   const hands = new Hands({ 
+    locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
 });
         hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 0, // 移动端性能优化关键: 0 (Lite)
-            minDetectionConfidence: 0.6,
-            minTrackingConfidence: 0.6,
-            selfieMode: true
-        });
+    maxNumHands: 1,      // 改为 1，单手操作更流畅
+    modelComplexity: 0,  
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+    selfieMode: true     // 增加这一行，优化前置摄像头识别
+});
         hands.onResults(onResults);
 
         document.getElementById('start-btn').addEventListener('click', () => {
@@ -543,3 +546,4 @@
 
 
 </html>
+
