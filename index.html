@@ -509,12 +509,15 @@
         }
 
         // --- 初始化启动 ---
-        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        const hands = new Hands({ 
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424515/${file}` 
+});
         hands.setOptions({
             maxNumHands: 2,
             modelComplexity: 0, // 移动端性能优化关键: 0 (Lite)
             minDetectionConfidence: 0.6,
-            minTrackingConfidence: 0.6
+            minTrackingConfidence: 0.6,
+            selfieMode: true
         });
         hands.onResults(onResults);
 
@@ -537,5 +540,6 @@
 
     </script>
 </body>
+
 
 </html>
