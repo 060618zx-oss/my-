@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 隔空手势绘图 (移动端版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js');
+            });
+        }
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Segoe UI', sans-serif;
+            touch-action: none;
+        }
+
+        /* 视频隐藏，只用于采集 */
+        #input_video {
+            display: none;
+        }
+
+        /* 画布全屏 */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* 状态条 */
+        #status-bar {
+            position: absolute;
+            top: 10px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: white;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* 启动遮罩 (iOS必须手动触发) */
+        #start-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+
+        #start-btn {
+            padding: 15px 40px;
+            font-size: 18px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+
+        /* UI 面板 (响应式适配手机) */
+        #ui-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            max-width: 350px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 15px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+            z-index: 20;
+        }
+
+        .panel-row {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+        }
+
+        .panel-title {
+            text-align: center;
+            font-weight: bold;
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid #ccc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            transition: transform 0.2s;
+        }
+
+        .btn.active {
+            border-color: #007bff;
+            transform: scale(1.15);
+            box-shadow: 0 0 15px rgba(0, 123, 255, 0.4);
+        }
+
+        .color-btn {
+            width: 35px;
+            height: 35px;
+        }
+
+        /* 虚拟光标 */
+        #cursor {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 0, 0, 0.6);
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 30;
+            display: none;
+            transform: translate(-50%, -50%);
+            /* 居中对齐坐标 */
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="start-screen">
+        <h2>AI 手势绘图 (移动版)</h2>
+        <p>请允许使用摄像头权限</p>
+        <p>🖐️ 张开手掌: 菜单 / 退出</p>
+        <p>👌 捏合食指: 书写</p>
+        <p>✌️ 剪刀手: 清屏</p>
+        <button id="start-btn">点击开始体验</button>
+    </div>
+
+    <div id="status-bar">等待启动...</div>
+
+    <video id="input_video" playsinline webkit-playsinline></video>
+    <canvas id="output_canvas"></canvas>
+    <div id="cursor"></div>
+
+    <div id="ui-panel">
+        <div class="panel-title">控制面板</div>
+        <div class="panel-row">
+            <div class="btn tool-btn active" data-tool="pen" style="background:#eee">✏️</div>
+            <div class="btn tool-btn" data-tool="eraser" style="background:#eee">🧽</div>
+        </div>
+        <div class="panel-row">
+            <div class="btn color-btn active" data-color="#000000" style="background: black;"></div>
+            <div class="btn color-btn" data-color="#ff0000" style="background: red;"></div>
+            <div class="btn color-btn" data-color="#00ff00" style="background: lime;"></div>
+            <div class="btn color-btn" data-color="#00ccff" style="background: #00ccff;"></div>
+        </div>
+        <div class="panel-row">
+            <div class="btn size-btn" data-size="3" style="background:#eee; font-size: 10px;">•</div>
+            <div class="btn size-btn active" data-size="8" style="background:#eee;">●</div>
+            <div class="btn size-btn" data-size="18" style="background:#eee; font-size: 20px;">⬤</div>
+        </div>
+    </div>
+
+    <script>
+        // --- 变量定义 ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const uiPanel = document.getElementById('ui-panel');
+        const cursor = document.getElementById('cursor');
+        const statusText = document.getElementById('status-bar');
+        const startScreen = document.getElementById('start-screen');
+
+        let isPanelOpen = false;
+        let currentTool = 'pen';
+        let currentColor = '#000000';
+        let currentSize = 8;
+        let globalScale = 1.0;
+        let strokes = [];
+        let currentStroke = null;
+        let particles = [];
+        let isClearing = false;
+        let prevPinchDist = null;
+
+        // 视频流尺寸修正参数
+        let videoScale = 1;
+        let videoOffsetX = 0;
+        let videoOffsetY = 0;
+
+        // --- 辅助函数 ---
+        function calcDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // --- 坐标转换核心 (关键: 解决手机屏幕比例问题) ---
+        function transformCoordinates(normX, normY) {
+            // MediaPipe 输出是 0-1 的归一化坐标。
+            // 但我们的画布是 "object-fit: cover" 填充的，视频被裁剪了。
+            // 需要将归一化坐标映射回真实的屏幕像素坐标。
+
+            // 1. 镜像反转 X (因为是前置摄像头)
+            let x = 1.0 - normX;
+            let y = normY;
+
+            // 2. 映射到包含偏移量的实际渲染尺寸
+            // 视频在画布上实际渲染的大小是 videoWidth * videoScale
+            let renderX = x * (videoElement.videoWidth * videoScale);
+            let renderY = y * (videoElement.videoHeight * videoScale);
+
+            // 3. 减去偏移量 (居中剪裁掉的部分)
+            let finalX = renderX + videoOffsetX;
+            let finalY = renderY + videoOffsetY;
+
+            return { x: finalX, y: finalY };
+        }
+
+        // --- 粒子系统 ---
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y; this.color = color;
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = Math.random() * 3 + 2;
+                this.life = 1.0;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy; this.life -= 0.03;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = this.life; ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, 4, 4); ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function triggerSnowEffect() {
+            if (isClearing || strokes.length === 0) return;
+            isClearing = true;
+            statusText.innerText = "❄️ 清屏中...";
+
+            // 降低移动端粒子密度
+            const density = 3;
+            strokes.forEach(stroke => {
+                for (let i = 0; i < stroke.points.length; i += density) {
+                    const p = stroke.points[i];
+                    // 应用当前缩放
+                    const x = (p.x - canvasElement.width / 2) * globalScale + canvasElement.width / 2;
+                    const y = (p.y - canvasElement.height / 2) * globalScale + canvasElement.height / 2;
+                    particles.push(new Particle(x, y, stroke.color));
+                }
+            });
+            strokes = [];
+        }
+
+        // --- 绘图循环 ---
+        function drawCanvas() {
+            // 计算屏幕适配
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            const vW = videoElement.videoWidth;
+            const vH = videoElement.videoHeight;
+            const cW = canvasElement.width;
+            const cH = canvasElement.height;
+
+            if (vW && vH) {
+                // 计算 "object-fit: cover" 的比例
+                const scale = Math.max(cW / vW, cH / vH);
+                videoScale = scale;
+                const renderW = vW * scale;
+                const renderH = vH * scale;
+                // 计算偏移量以居中
+                videoOffsetX = (cW - renderW) / 2;
+                videoOffsetY = (cH - renderH) / 2;
+
+                // 绘制视频背景 (镜像)
+                canvasCtx.save();
+                // 移动到中心
+                canvasCtx.translate(cW / 2, cH / 2);
+                canvasCtx.scale(-1, 1); // 镜像
+                canvasCtx.translate(-cW / 2, -cH / 2);
+                // 绘制图片 (注意：由于已经镜像，drawImage 参数需要逻辑反转或者简单处理)
+                // 更简单的方法：直接画，然后通过坐标转换处理镜像，但为了视觉一致，我们这里画镜像视频
+
+                // 稍微复杂的变换来保证 cover 效果正确
+                // 重置变换为了简单的 drawImage
+                canvasCtx.restore();
+                canvasCtx.save();
+                canvasCtx.translate(cW / 2, cH / 2);
+                canvasCtx.scale(-1, 1); // 镜像整个画布上下文
+                // 此时中心点是 0,0。
+                canvasCtx.drawImage(videoElement, -renderW / 2, -renderH / 2, renderW, renderH);
+                canvasCtx.restore();
+            } else {
+                canvasCtx.fillStyle = '#333';
+                canvasCtx.fillRect(0, 0, cW, cH);
+            }
+
+            // 绘制笔迹
+            canvasCtx.save();
+            canvasCtx.translate(cW / 2, cH / 2);
+            canvasCtx.scale(globalScale, globalScale);
+            canvasCtx.translate(-cW / 2, -cH / 2);
+            canvasCtx.lineCap = 'round';
+            canvasCtx.lineJoin = 'round';
+
+            strokes.forEach(stroke => {
+                canvasCtx.beginPath();
+                canvasCtx.lineWidth = stroke.size;
+                canvasCtx.strokeStyle = stroke.tool === 'eraser' ? 'rgba(255,255,255,0.8)' : stroke.color;
+                // 橡皮擦在移动端用半透明白色模拟
+
+                if (stroke.points.length > 0) {
+                    canvasCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+                    for (let i = 1; i < stroke.points.length; i++) {
+                        canvasCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+                    }
+                }
+                canvasCtx.stroke();
+            });
+            canvasCtx.restore();
+
+            // 粒子
+            if (particles.length > 0) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    particles[i].update();
+                    particles[i].draw(canvasCtx);
+                    if (particles[i].life <= 0) particles.splice(i, 1);
+                }
+                if (particles.length === 0 && isClearing) {
+                    isClearing = false;
+                    statusText.innerText = "🖐️ 请展示手掌";
+                }
+            }
+        }
+
+        // --- MediaPipe 处理 ---
+        function onResults(results) {
+            drawCanvas();
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                cursor.style.display = 'none';
+                return;
+            }
+
+            const handsData = results.multiHandLandmarks;
+
+            // --- 双手缩放 ---
+            if (handsData.length === 2) {
+                const p1 = transformCoordinates(handsData[0][8].x, handsData[0][8].y);
+                const p2 = transformCoordinates(handsData[1][8].x, handsData[1][8].y);
+                const dist = calcDistance(p1, p2);
+
+                statusText.innerText = "👐 双指缩放中";
+                if (prevPinchDist) {
+                    const delta = dist - prevPinchDist;
+                    if (Math.abs(delta) > 2) globalScale = Math.max(0.5, Math.min(3.0, globalScale * (1 + delta * 0.003)));
+                }
+                prevPinchDist = dist;
+                return;
+            } else {
+                prevPinchDist = null;
+            }
+
+            // --- 单手逻辑 ---
+            const landmarks = handsData[0];
+            const indexTip = transformCoordinates(landmarks[8].x, landmarks[8].y);
+            const thumbTip = transformCoordinates(landmarks[4].x, landmarks[4].y);
+
+            // 简单的手势判断
+            const isPinkyOpen = landmarks[20].y < landmarks[18].y; // 注意：y向下增大，up是更小
+            const isIndexOpen = landmarks[8].y < landmarks[6].y;
+            const isMiddleOpen = landmarks[12].y < landmarks[10].y;
+
+            // 优化移动端手掌检测：只要4个指头都比较直
+            const isPalm = isIndexOpen && isMiddleOpen && isPinkyOpen && (calcDistance(indexTip, thumbTip) > 80);
+
+            // 捏合检测
+            const pinchDist = calcDistance(indexTip, thumbTip);
+            const isPinch = pinchDist < 50; // 移动端判定距离
+
+            // 剪刀手
+            const isVictory = isIndexOpen && isMiddleOpen && !isPinkyOpen && (calcDistance(indexTip, thumbTip) > 60);
+
+            // 状态机
+            if (isVictory) {
+                triggerSnowEffect();
+                return;
+            }
+
+            if (isPanelOpen) {
+                cursor.style.display = 'block';
+                cursor.style.left = indexTip.x + 'px';
+                cursor.style.top = indexTip.y + 'px';
+                statusText.innerText = "👆 移动食指选择";
+
+                if (isPalm && !isPinch) {
+                    // 关闭面板需要一点防抖，或者用特定区域，这里简化为张开手掌关闭
+                    // 为了体验更好，我们在移动端检测是否"点击"了外面，或者再次张手
+                    // 简单化：张手关闭
+                    uiPanel.style.display = 'none';
+                    isPanelOpen = false;
+                    return;
+                }
+
+                // 模拟点击: 食指悬停
+                checkUICollision(indexTip.x, indexTip.y);
+
+            } else {
+                // 绘图模式
+                if (isPalm) {
+                    if (!currentStroke) {
+                        uiPanel.style.display = 'flex';
+                        isPanelOpen = true;
+                        statusText.innerText = "菜单已打开";
+                        return;
+                    }
+                }
+
+                cursor.style.display = 'block';
+                cursor.style.left = indexTip.x + 'px';
+                cursor.style.top = indexTip.y + 'px';
+                cursor.style.background = isPinch ? '#00ff00' : 'rgba(255,0,0,0.5)';
+
+                if (isPinch) {
+                    statusText.innerText = "✍️ 书写中...";
+                    // 逆向缩放坐标
+                    const rawX = (indexTip.x - canvasElement.width / 2) / globalScale + canvasElement.width / 2;
+                    const rawY = (indexTip.y - canvasElement.height / 2) / globalScale + canvasElement.height / 2;
+
+                    if (!currentStroke) {
+                        currentStroke = {
+                            tool: currentTool, color: currentColor, size: currentSize / globalScale,
+                            points: [{ x: rawX, y: rawY }]
+                        };
+                        strokes.push(currentStroke);
+                    } else {
+                        currentStroke.points.push({ x: rawX, y: rawY });
+                    }
+                } else {
+                    statusText.innerText = "👌 捏合食指书写";
+                    currentStroke = null;
+                }
+            }
+        }
+
+        // --- UI 碰撞 ---
+        function checkUICollision(x, y) {
+            const buttons = document.querySelectorAll('.btn');
+            buttons.forEach(btn => {
+                const rect = btn.getBoundingClientRect();
+                if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                    handleBtnClick(btn);
+                }
+            });
+        }
+
+        function handleBtnClick(btn) {
+            if (btn.classList.contains('active')) return;
+            // 简单震动反馈
+            if (navigator.vibrate) navigator.vibrate(20);
+
+            if (btn.classList.contains('tool-btn')) {
+                document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTool = btn.getAttribute('data-tool');
+            } else if (btn.classList.contains('color-btn')) {
+                document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentColor = btn.getAttribute('data-color');
+                currentTool = 'pen';
+            } else if (btn.classList.contains('size-btn')) {
+                document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentSize = parseInt(btn.getAttribute('data-size'));
+            }
+        }
+
+        // --- 初始化启动 ---
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 0, // 移动端性能优化关键: 0 (Lite)
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+        hands.onResults(onResults);
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            statusText.innerText = "正在启动摄像头...";
+            startScreen.style.display = 'none';
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({ image: videoElement }); },
+                width: 1280,
+                height: 720,
+                facingMode: 'user' // 强制前置摄像头
+            });
+            camera.start().then(() => {
+                statusText.innerText = "系统就绪 - 请展示手掌";
+            }).catch(e => {
+                alert("摄像头启动失败: " + e.message + "\n请确保在 HTTPS 环境下运行。");
+            });
+        });
+
+    </script>
+</body>
+
+</html>
